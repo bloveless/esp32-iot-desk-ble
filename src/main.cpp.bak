@@ -1,0 +1,167 @@
+#include <Arduino.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include <EEPROM.h>
+#include "esp_gap_ble_api.h"
+
+#define SERVICE_UUID        "42d04df9-b75d-4d02-b17b-ae6983e6418d"
+#define CHARACTERISTIC_UUID "16e9636b-8115-4523-af52-da20ab70f51e"
+#define CHARACTERISTIC_SAVED_HEIGHT_1 ""
+#define ESP_BLE_OOB_DISABLE 0
+
+uint8_t height_0 = 94;
+uint8_t height_1 = 114;
+
+uint8_t set_height = height_0;
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      uint8_t* value = pCharacteristic->getData();
+      Serial.print("value[0]: ");
+      Serial.print(value[0]);
+      Serial.println();
+      switch(value[0]) {
+        case 0:
+          set_height = height_0;
+          Serial.print("Case 0 ");
+          Serial.print("New set_height: ");
+          Serial.println(set_height);
+          break;
+        
+        case 1:
+          set_height = height_1;
+          Serial.print("Case 1 ");
+          Serial.print("New set_height: ");
+          Serial.println(set_height);
+          break;
+      }
+    }
+};
+
+class MySecurity : public BLESecurityCallbacks
+{
+  uint32_t onPassKeyRequest() {
+    Serial.println("PassKeyRequest");
+    return 123456;
+  }
+
+  void onPassKeyNotify(uint32_t pass_key) {
+    Serial.print("On passkey Notify number: ");
+    Serial.println(pass_key);
+  }
+
+  bool onSecurityRequest() {
+    Serial.println("On Security Request");
+    return true;
+  }
+
+  void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
+    Serial.println("Starting BLE work!");
+    if (cmpl.success) {
+      uint16_t length;
+      esp_ble_gap_get_whitelist_size(&length);
+      Serial.print("size: ");
+      Serial.println(length);
+    }
+  }
+
+  bool onConfirmPIN(uint32_t pin) {
+    Serial.print("pin: ");
+    Serial.println(pin);
+    return false;
+  }
+};
+
+void setup() {
+  Serial.begin(115200);
+  EEPROM.begin(3);
+
+  BLEDevice::init("ESP32 BLE example");
+  BLEServer *pServer = BLEDevice::createServer();
+  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
+
+  /*
+   * Required in authentication process to provide displaying and/or input passkey or yes/no butttons confirmation
+   */
+  BLEDevice::setSecurityCallbacks(new MySecurity());
+
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+    CHARACTERISTIC_UUID,
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_WRITE
+  );
+  pCharacteristic->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED | ESP_GATT_PERM_WRITE_ENCRYPTED);
+  pCharacteristic->setCallbacks(new MyCallbacks());
+  pCharacteristic->setValue("Hello World");
+
+  pService->start();
+
+  BLEAdvertising *pAdvertising = pServer->getAdvertising();
+  pAdvertising->addServiceUUID(BLEUUID(pService->getUUID()));
+
+  BLESecurity *pSecurity = new BLESecurity();
+  pSecurity->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_ONLY);
+  pSecurity->setCapability(ESP_IO_CAP_OUT);
+  pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+
+  pAdvertising->start();
+
+  Serial.println("Characteristic defined! Now you can read it in your phone!");
+}
+
+int pingPin = 14;
+float duration, distance;
+
+long microsecondsToInches(long microseconds) {
+  // According to Parallax's datasheet for the PING))), there are 73.746
+  // microseconds per inch (i.e. sound travels at 1130 feet per second).
+  // This gives the distance travelled by the ping, outbound and return,
+  // so we divide by 2 to get the distance of the obstacle.
+  // See: http://www.parallax.com/dl/docs/prod/acc/28015-PING-v1.3.pdf
+  return microseconds / 74 / 2;
+}
+
+long microsecondsToCentimeters(long microseconds) {
+  // The speed of sound is 340 m/s or 29 microseconds per centimeter.
+  // The ping travels out and back, so to find the distance of the object we
+  // take half of the distance travelled.
+  return microseconds / 29 / 2;
+}
+
+void loop() {
+  // establish variables for duration of the ping, and the distance result
+  // in inches and centimeters:
+  long duration, inches, cm;
+
+  // The PING))) is triggered by a HIGH pulse of 2 or more microseconds.
+  // Give a short LOW pulse beforehand to ensure a clean HIGH pulse:
+  pinMode(pingPin, OUTPUT);
+  digitalWrite(pingPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(pingPin, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(pingPin, LOW);
+
+  // The same pin is used to read the signal from the PING))): a HIGH pulse
+  // whose duration is the time (in microseconds) from the sending of the ping
+  // to the reception of its echo off of an object.
+  pinMode(pingPin, INPUT);
+  duration = pulseIn(pingPin, HIGH);
+
+  // convert the time into a distance
+  inches = microsecondsToInches(duration);
+  cm = microsecondsToCentimeters(duration);
+
+  Serial.print(inches);
+  Serial.print("in, ");
+  Serial.print(cm);
+  Serial.print("cm, ");
+  Serial.print("requested height ");
+  Serial.print(set_height);
+  Serial.print(" cm");
+  Serial.println();
+
+  delay(2000);
+}
